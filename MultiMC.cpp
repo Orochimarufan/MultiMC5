@@ -56,26 +56,26 @@ MultiMC::MultiMC(int &argc, char **argv) : QApplication(argc, argv),
 		Parser parser(FlagStyle::GNU, ArgumentStyle::SpaceAndEquals);
 
 		// --help
-		parser.addSwitch("help");
-		parser.addShortOpt("help", 'h');
+		parser.newSwitch("help");
+		parser.addFlag("help", 'h');
 		parser.addDocumentation("help", "display this help and exit.");
 		// --version
-		parser.addSwitch("version");
-		parser.addShortOpt("version", 'V');
+		parser.newSwitch("version");
+		parser.addFlag("version", 'V');
 		parser.addDocumentation("version", "display program version and exit.");
 		// --dir
-		parser.addOption("dir", applicationDirPath());
-		parser.addShortOpt("dir", 'd');
+		parser.newOption("dir", applicationDirPath());
+		parser.addFlag("dir", 'd');
 		parser.addDocumentation("dir", "use the supplied directory as MultiMC root instead of "
 									   "the binary location (use '.' for current)");
 		// --update
-		parser.addOption("update");
-		parser.addShortOpt("update", 'u');
+		parser.newOption("update");
+		parser.addFlag("update", 'u');
 		parser.addDocumentation("update", "replaces the given file with the running executable",
 								"<path>");
 		// --quietupdate
-		parser.addSwitch("quietupdate");
-		parser.addShortOpt("quietupdate", 'U');
+		parser.newSwitch("quietupdate");
+		parser.addFlag("quietupdate", 'U');
 		parser.addDocumentation("quietupdate",
 								"doesn't restart MultiMC after installing updates");
 		// WARNING: disabled until further notice

@@ -34,6 +34,7 @@ include/userutils.h
 src/userutils.cpp
 
 include/cmdutils.h
+src/cmdutils_p.h
 src/cmdutils.cpp
 )
 

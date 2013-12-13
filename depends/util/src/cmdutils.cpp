@@ -13,9 +13,15 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * ------------------------------------------------------------------------
+ * 2013-12-13 Commandline Parser Rewrite (Orochimarufan)
  */
 
 #include "include/cmdutils.h"
+#include "src/cmdutils_p.h"
+
+#include <QMetaType>
 
 /**
  * @file libutil/src/cmdutils.cpp
@@ -26,13 +32,16 @@ namespace Util
 namespace Commandline
 {
 
-// commandline splitter
+QVariant Required = QVariant::fromValue(_Required());
+
+// ------------------ commandline splitter ------------------
 QStringList splitArgs(QString args)
 {
 	QStringList argv;
 	QString current;
 	bool escape = false;
 	QChar inquotes;
+
 	for (int i = 0; i < args.length(); i++)
 	{
 		QChar cchar = args.at(i);
@@ -75,196 +84,86 @@ QStringList splitArgs(QString args)
 	return argv;
 }
 
-Parser::Parser(FlagStyle::Enum flagStyle, ArgumentStyle::Enum argStyle)
+// ------------------ Required ------------------
+static inline bool isRequired(ParameterDefinition *param)
+{
+	return param->defaultValue.typeName() == QStringLiteral("Required");
+}
+
+// ------------------ ParserPrivate ------------------
+ParserPrivate::ParserPrivate(FlagStyle flagStyle, ArgumentStyle argStyle)
 {
 	m_flagStyle = flagStyle;
 	m_argStyle = argStyle;
 }
 
-// styles setter/getter
-void Parser::setArgumentStyle(ArgumentStyle::Enum style)
+// Definitions
+ParameterDefinition *ParserPrivate::addDefinition(DefinitionType type, QString name, QVariant def)
 {
-	m_argStyle = style;
-}
-ArgumentStyle::Enum Parser::argumentStyle()
-{
-	return m_argStyle;
-}
+	if (m_longLookup.contains(name))
+		throw "Parameter name in use.";
 
-void Parser::setFlagStyle(FlagStyle::Enum style)
-{
-	m_flagStyle = style;
-}
-FlagStyle::Enum Parser::flagStyle()
-{
-	return m_flagStyle;
-}
-
-// setup methods
-void Parser::addSwitch(QString name, bool def)
-{
-	if (m_params.contains(name))
-		throw "Name not unique";
-
-	OptionDef *param = new OptionDef;
-	param->type = otSwitch;
+	ParameterDefinition *param = new ParameterDefinition;
+	param->type = type;
 	param->name = name;
-	param->metavar = QString("<%1>").arg(name);
-	param->def = def;
+	param->meta = QStringLiteral("<%s>").arg(name);
+	param->defaultValue = def;
 
-	m_options[name] = param;
-	m_params[name] = (CommonDef *)param;
-	m_optionList.append(param);
-}
+	m_definitions << param;
+	m_nameLookup.insert(name, param);
 
-void Parser::addOption(QString name, QVariant def)
-{
-	if (m_params.contains(name))
-		throw "Name not unique";
-
-	OptionDef *param = new OptionDef;
-	param->type = otOption;
-	param->name = name;
-	param->metavar = QString("<%1>").arg(name);
-	param->def = def;
-
-	m_options[name] = param;
-	m_params[name] = (CommonDef *)param;
-	m_optionList.append(param);
-}
-
-void Parser::addArgument(QString name, bool required, QVariant def)
-{
-	if (m_params.contains(name))
-		throw "Name not unique";
-
-	PositionalDef *param = new PositionalDef;
-	param->name = name;
-	param->def = def;
-	param->required = required;
-	param->metavar = name;
-
-	m_positionals.append(param);
-	m_params[name] = (CommonDef *)param;
-}
-
-void Parser::addDocumentation(QString name, QString doc, QString metavar)
-{
-	if (!m_params.contains(name))
-		throw "Name does not exist";
-
-	CommonDef *param = m_params[name];
-	param->doc = doc;
-	if (!metavar.isNull())
-		param->metavar = metavar;
-}
-
-void Parser::addShortOpt(QString name, QChar flag)
-{
-	if (!m_params.contains(name))
-		throw "Name does not exist";
-	if (!m_options.contains(name))
-		throw "Name is not an Option or Swtich";
-
-	OptionDef *param = m_options[name];
-	m_flags[flag] = param;
-	param->flag = flag;
-}
-
-// help methods
-QString Parser::compileHelp(QString progName, int helpIndent, bool useFlags)
-{
-	QStringList help;
-	help << compileUsage(progName, useFlags) << "\r\n";
-
-	// positionals
-	if (!m_positionals.isEmpty())
+	if (type == DefinitionType::Positional)
+		m_positionals << param;
+	else if (type == DefinitionType::Switch || type == DefinitionType::Option)
 	{
-		help << "\r\n";
-		help << "Positional arguments:\r\n";
-		QListIterator<PositionalDef *> it2(m_positionals);
-		while (it2.hasNext())
-		{
-			PositionalDef *param = it2.next();
-			help << "  " << param->metavar;
-			help << " " << QString(helpIndent - param->metavar.length() - 1, ' ');
-			help << param->doc << "\r\n";
-		}
+		m_options << param;
+		m_longLookup.insert(name, param);
 	}
 
-	// Options
-	if (!m_optionList.isEmpty())
-	{
-		help << "\r\n";
-		QString optPrefix, flagPrefix;
-		getPrefix(optPrefix, flagPrefix);
-
-		help << "Options & Switches:\r\n";
-		QListIterator<OptionDef *> it(m_optionList);
-		while (it.hasNext())
-		{
-			OptionDef *option = it.next();
-			help << "  ";
-			int nameLength = optPrefix.length() + option->name.length();
-			if (!option->flag.isNull())
-			{
-				nameLength += 3 + flagPrefix.length();
-				help << flagPrefix << option->flag << ", ";
-			}
-			help << optPrefix << option->name;
-			if (option->type == otOption)
-			{
-				QString arg = QString("%1%2").arg(
-					((m_argStyle == ArgumentStyle::Equals) ? "=" : " "), option->metavar);
-				nameLength += arg.length();
-				help << arg;
-			}
-			help << " " << QString(helpIndent - nameLength - 1, ' ');
-			help << option->doc << "\r\n";
-		}
-	}
-
-	return help.join("");
+	return param;
 }
 
-QString Parser::compileUsage(QString progName, bool useFlags)
+ParameterDefinition *ParserPrivate::lookup(QString name)
 {
-	QStringList usage;
-	usage << "Usage: " << progName;
+	if (!m_nameLookup.contains(name))
+		throw "Parameter name not in use.";
 
-	QString optPrefix, flagPrefix;
-	getPrefix(optPrefix, flagPrefix);
-
-	// options
-	QListIterator<OptionDef *> it(m_optionList);
-	while (it.hasNext())
-	{
-		OptionDef *option = it.next();
-		usage << " [";
-		if (!option->flag.isNull() && useFlags)
-			usage << flagPrefix << option->flag;
-		else
-			usage << optPrefix << option->name;
-		if (option->type == otOption)
-			usage << ((m_argStyle == ArgumentStyle::Equals) ? "=" : " ") << option->metavar;
-		usage << "]";
-	}
-
-	// arguments
-	QListIterator<PositionalDef *> it2(m_positionals);
-	while (it2.hasNext())
-	{
-		PositionalDef *param = it2.next();
-		usage << " " << (param->required ? "<" : "[");
-		usage << param->metavar;
-		usage << (param->required ? ">" : "]");
-	}
-
-	return usage.join("");
+	return m_nameLookup[name];
 }
 
-// parsing
-QHash<QString, QVariant> Parser::parse(QStringList argv)
+void ParserPrivate::clear()
+{
+	m_nameLookup.clear();
+	m_positionals.clear();
+	m_options.clear();
+	m_longLookup.clear();
+	m_flagLookup.clear();
+
+	for (QMutableListIterator<ParameterDefinition *> it(m_definitions); it.hasNext();)
+	{
+		ParameterDefinition *param = it.next();
+		it.remove();
+		delete param;
+	}
+}
+
+// Flag and Long option prefix
+void ParserPrivate::getPrefix(QString &opt, QString &flag)
+{
+	if (m_flagStyle == FlagStyle::Windows)
+		opt = flag = "/";
+	else if (m_flagStyle == FlagStyle::Unix)
+		opt = flag = "-";
+	// else if (m_flagStyle == FlagStyle::GNU)
+	else
+	{
+		opt = "--";
+		flag = "-";
+	}
+}
+
+// Parsing
+QHash<QString, QVariant> ParserPrivate::parse(QStringList argv)
 {
 	QHash<QString, QVariant> map;
 
@@ -273,7 +172,7 @@ QHash<QString, QVariant> Parser::parse(QStringList argv)
 
 	QString optionPrefix;
 	QString flagPrefix;
-	QListIterator<PositionalDef *> positionals(m_positionals);
+	QListIterator<ParameterDefinition *> positionals(m_positionals);
 	QStringList expecting;
 
 	getPrefix(optionPrefix, flagPrefix);
@@ -314,23 +213,24 @@ QHash<QString, QVariant> Parser::parse(QStringList argv)
 				name = name.left(i);
 			}
 
-			if (m_options.contains(name))
+			if (m_longLookup.contains(name))
 			{
-				if (map.contains(name))
-					throw ParsingError(QString("Option %2%1 was given multiple times")
-										   .arg(name, optionPrefix));
+				ParameterDefinition *param = m_longLookup[name];
 
-				OptionDef *option = m_options[name];
-				if (option->type == otSwitch)
-					map[name] = true;
-				else // if (option->type == otOption)
+				if (map.contains(param->name))
+					throw ParsingError(QString("Option %2%1 was given multiple times")
+										   .arg(param->name, optionPrefix));
+
+				if (param->type == DefinitionType::Switch)
+					map[param->name] = !param->defaultValue.toBool();
+				else // if (param->type == DefinitionType::Option)
 				{
 					if (m_argStyle == ArgumentStyle::Space)
-						expecting.append(name);
+						expecting.append(param->name);
 					else if (!equals.isNull())
-						map[name] = equals;
+						map[param->name] = equals;
 					else if (m_argStyle == ArgumentStyle::SpaceAndEquals)
-						expecting.append(name);
+						expecting.append(param->name);
 					else
 						throw ParsingError(QString("Option %2%1 reqires an argument.")
 											   .arg(name, optionPrefix));
@@ -339,7 +239,9 @@ QHash<QString, QVariant> Parser::parse(QStringList argv)
 				continue;
 			}
 
-			throw ParsingError(QString("Unknown Option %2%1").arg(name, optionPrefix));
+			// We need to fall through if the prefixes match
+			if (optionPrefix != flagPrefix)
+				throw ParsingError(QString("Unknown Option %2%1").arg(name, optionPrefix));
 		}
 
 		if (arg.startsWith(flagPrefix))
@@ -363,33 +265,33 @@ QHash<QString, QVariant> Parser::parse(QStringList argv)
 			{
 				QChar flag = flags.at(i);
 
-				if (!m_flags.contains(flag))
+				if (!m_flagLookup.contains(flag))
 					throw ParsingError(QString("Unknown flag %2%1").arg(flag, flagPrefix));
 
-				OptionDef *option = m_flags[flag];
+				ParameterDefinition *param = m_flagLookup[flag];
 
-				if (map.contains(option->name))
+				if (map.contains(param->name))
 					throw ParsingError(QString("Option %2%1 was given multiple times")
-										   .arg(option->name, optionPrefix));
+										   .arg(param->name, optionPrefix));
 
-				if (option->type == otSwitch)
-					map[option->name] = true;
-				else // if (option->type == otOption)
+				if (param->type == DefinitionType::Switch)
+					map[param->name] = !param->defaultValue.toBool();
+				else // if (param->type == DefinitionType::Option)
 				{
 					if (m_argStyle == ArgumentStyle::Space)
-						expecting.append(option->name);
+						expecting.append(param->name);
 					else if (!equals.isNull())
 						if (i == flags.length() - 1)
-							map[option->name] = equals;
+							map[param->name] = equals;
 						else
 							throw ParsingError(QString("Flag %4%2 of Argument-requiring Option "
 													   "%1 not last flag in %4%3")
-												   .arg(option->name, flag, flags, flagPrefix));
+												   .arg(param->name, flag, flags, flagPrefix));
 					else if (m_argStyle == ArgumentStyle::SpaceAndEquals)
-						expecting.append(option->name);
+						expecting.append(param->name);
 					else
 						throw ParsingError(QString("Option %1 reqires an argument. (flag %3%2)")
-											   .arg(option->name, flag, flagPrefix));
+											   .arg(param->name, flag, flagPrefix));
 				}
 			}
 
@@ -398,9 +300,9 @@ QHash<QString, QVariant> Parser::parse(QStringList argv)
 
 		// must be a positional argument
 		if (!positionals.hasNext())
-			throw ParsingError(QString("Don't know what to do with '%1'").arg(arg));
+			throw ParsingError(QString("Too many positional arguments: '%1'").arg(arg));
 
-		PositionalDef *param = positionals.next();
+		ParameterDefinition *param = positionals.next();
 
 		map[param->name] = arg;
 	}
@@ -410,71 +312,221 @@ QHash<QString, QVariant> Parser::parse(QStringList argv)
 		throw ParsingError(QString("Was still expecting arguments for %2%1").arg(
 			expecting.join(QString(", ") + optionPrefix), optionPrefix));
 
-	while (positionals.hasNext())
-	{
-		PositionalDef *param = positionals.next();
-		if (param->required)
-			throw ParsingError(
-				QString("Missing required positional argument '%1'").arg(param->name));
-		else
-			map[param->name] = param->def;
-	}
-
 	// fill out gaps
-	QListIterator<OptionDef *> iter(m_optionList);
-	while (iter.hasNext())
+	for (QListIterator<ParameterDefinition *> it(m_definitions); it.hasNext();)
 	{
-		OptionDef *option = iter.next();
-		if (!map.contains(option->name))
-			map[option->name] = option->def;
+		ParameterDefinition *param = it.next();
+		if (!map.contains(param->name))
+		{
+			if (isRequired(param))
+				throw ParsingError(
+					QStringLiteral("Missing mandatory argument '%1'").arg(param->name));
+			else
+				map[param->name] = param->defaultValue;
+		}
 	}
 
 	return map;
 }
 
-// clear defs
-void Parser::clear()
+ParserPrivate::~ParserPrivate()
 {
-	m_flags.clear();
-	m_params.clear();
-	m_options.clear();
+	clear();
+}
 
-	QMutableListIterator<OptionDef *> it(m_optionList);
-	while (it.hasNext())
+// ------------------ Parser ------------------
+Parser::Parser(FlagStyle flagStyle, ArgumentStyle argStyle)
+{
+	d_ptr = new ParserPrivate(flagStyle, argStyle);
+}
+
+// ---------- Parameter Style ----------
+void Parser::setArgumentStyle(ArgumentStyle style)
+{
+	d_ptr->m_argStyle = style;
+}
+ArgumentStyle Parser::argumentStyle()
+{
+	return d_ptr->m_argStyle;
+}
+
+void Parser::setFlagStyle(FlagStyle style)
+{
+	d_ptr->m_flagStyle = style;
+}
+FlagStyle Parser::flagStyle()
+{
+	return d_ptr->m_flagStyle;
+}
+
+// ---------- Defining parameters ----------
+void Parser::newSwitch(QString name, bool direction)
+{
+	d_ptr->addDefinition(DefinitionType::Switch, name, direction);
+}
+
+void Parser::newOption(QString name, QVariant def)
+{
+	d_ptr->addDefinition(DefinitionType::Option, name, def);
+}
+
+void Parser::newArgument(QString name, QVariant def)
+{
+	d_ptr->addDefinition(DefinitionType::Option, name, def);
+}
+
+// ---------- Modifying Parameters ----------
+void Parser::addDocumentation(QString name, QString doc, QString metavar)
+{
+	ParameterDefinition *param = d_ptr->lookup(name);
+
+	param->desc = doc;
+
+	if (!metavar.isNull())
+		param->meta = metavar;
+}
+
+void Parser::addFlag(QString name, QChar flag)
+{
+	if (d_ptr->m_flagLookup.contains(flag))
+		throw "Short option already in use.";
+
+	ParameterDefinition *param = d_ptr->lookup(name);
+
+	param->flags << flag;
+	d_ptr->m_flagLookup.insert(flag, param);
+}
+
+void Parser::addAlias(QString name, QString alias)
+{
+	if (d_ptr->m_longLookup.contains(alias))
+		throw "Long option already in use.";
+
+	ParameterDefinition *param = d_ptr->lookup(name);
+
+	param->aliases << alias;
+	d_ptr->m_longLookup.insert(alias, param);
+}
+
+// ---------- Generating Help messages ----------
+QString Parser::compileHelp(QString progName, int helpIndent, bool useFlags)
+{
+	QStringList help;
+	help << compileUsage(progName, useFlags) << "\r\n";
+
+	// positionals
+	if (!d_ptr->m_positionals.isEmpty())
 	{
-		OptionDef *option = it.next();
-		it.remove();
-		delete option;
+		help << "\r\n";
+		help << "Positional arguments:\r\n";
+		QListIterator<ParameterDefinition *> it2(d_ptr->m_positionals);
+		while (it2.hasNext())
+		{
+			ParameterDefinition *param = it2.next();
+			help << "  " << param->meta;
+			help << " " << QString(helpIndent - param->meta.length() - 1, ' ');
+			help << param->desc << "\r\n";
+		}
 	}
 
-	QMutableListIterator<PositionalDef *> it2(m_positionals);
-	while (it2.hasNext())
+	// Options
+	if (!d_ptr->m_options.isEmpty())
 	{
-		PositionalDef *arg = it2.next();
-		it2.remove();
-		delete arg;
+		help << "\r\n";
+		QString optPrefix, flagPrefix;
+		d_ptr->getPrefix(optPrefix, flagPrefix);
+
+		help << "Options & Switches:\r\n";
+		QListIterator<ParameterDefinition *> it(d_ptr->m_options);
+		while (it.hasNext())
+		{
+			ParameterDefinition *param = it.next();
+
+			help << "  ";
+
+			int nameLength = optPrefix.length() + param->name.length();
+
+			for (QListIterator<QChar> it3(param->flags); it3.hasNext();)
+			{
+				nameLength += 3 + flagPrefix.length();
+				help << flagPrefix << it3.next() << ", ";
+			}
+			for (QListIterator<QString> it3(param->aliases); it3.hasNext();)
+			{
+				QString alias = it3.next();
+				nameLength += 2 + optPrefix.length() + alias.length();
+				help << optPrefix << alias;
+			}
+
+			help << optPrefix << param->name;
+
+			if (param->type == DefinitionType::Option)
+			{
+				QString arg = QString("%1%2").arg(
+					((d_ptr->m_argStyle == ArgumentStyle::Equals) ? "=" : " "), param->meta);
+				nameLength += arg.length();
+				help << arg;
+			}
+
+			help << " " << QString(helpIndent - nameLength - 1, ' ');
+			help << param->desc << "\r\n";
+		}
 	}
+
+	return help.join("");
+}
+
+QString Parser::compileUsage(QString progName, bool useFlags)
+{
+	QStringList usage;
+	usage << "Usage: " << progName;
+
+	QString optPrefix, flagPrefix;
+	d_ptr->getPrefix(optPrefix, flagPrefix);
+
+	// options
+	for (QListIterator<ParameterDefinition *> it(d_ptr->m_options); it.hasNext();)
+	{
+		ParameterDefinition *param = it.next();
+		bool required = isRequired(param);
+		if (!required) usage << " [";
+		if (!param->flags.isEmpty() && useFlags)
+			usage << flagPrefix << param->flags[0];
+		else
+			usage << optPrefix << param->name;
+		if (param->type == DefinitionType::Option)
+			usage << ((d_ptr->m_argStyle == ArgumentStyle::Equals) ? "=" : " ") << param->meta;
+		if (!required) usage << "]";
+	}
+
+	// arguments
+	for (QListIterator<ParameterDefinition *> it(d_ptr->m_positionals); it.hasNext();)
+	{
+		ParameterDefinition *param = it.next();
+		usage << " ";
+		bool required = isRequired(param);
+		usage << (required ? "<" : "[") << param->meta << (required ? ">" : "]");
+	}
+
+	return usage.join("");
+}
+
+// parsing
+QHash<QString, QVariant> Parser::parse(QStringList argv)
+{
+	return d_ptr->parse(argv);
+}
+
+// clear defs
+void Parser::clearDefinitions()
+{
+	d_ptr->clear();
 }
 
 // Destructor
 Parser::~Parser()
 {
-	clear();
-}
-
-// getPrefix
-void Parser::getPrefix(QString &opt, QString &flag)
-{
-	if (m_flagStyle == FlagStyle::Windows)
-		opt = flag = "/";
-	else if (m_flagStyle == FlagStyle::Unix)
-		opt = flag = "-";
-	// else if (m_flagStyle == FlagStyle::GNU)
-	else
-	{
-		opt = "--";
-		flag = "-";
-	}
+	delete d_ptr;
 }
 
 // ParsingError
