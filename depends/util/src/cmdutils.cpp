@@ -32,7 +32,9 @@ namespace Util
 namespace Commandline
 {
 
-QVariant Required = QVariant::fromValue(_Required());
+// Required
+struct _Required {};
+QVariant const Required = QVariant::fromValue(_Required());
 
 // ------------------ commandline splitter ------------------
 QStringList splitArgs(QString args)
@@ -87,7 +89,8 @@ QStringList splitArgs(QString args)
 // ------------------ Required ------------------
 static inline bool isRequired(ParameterDefinition *param)
 {
-	return param->defaultValue.typeName() == QStringLiteral("Required");
+    // TODO: TEST !!!
+	return param->defaultValue.typeName() == QStringLiteral("Util::Commandline::_Required");
 }
 
 // ------------------ ParserPrivate ------------------
@@ -535,3 +538,5 @@ ParsingError::ParsingError(const QString &what) : std::runtime_error(what.toStdS
 }
 }
 }
+
+Q_DECLARE_METATYPE(Util::Commandline::_Required)

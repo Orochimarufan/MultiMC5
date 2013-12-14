@@ -35,10 +35,6 @@
  * @brief commandline parsing and processing utilities
  */
 
-// Required structure
-namespace Util { namespace Commandline { struct _Required {}; extern QVariant Required; } }
-Q_DECLARE_METATYPE(Util::Commandline::_Required)
-
 namespace Util
 {
 namespace Commandline
@@ -102,6 +98,11 @@ public:
  * @brief Private part of the parser
  */
 class ParserPrivate;
+
+/**
+ * @brief Constant to indicate required arguments
+ */
+extern QVariant const Required;
 
 /**
  * @brief The Parser class
