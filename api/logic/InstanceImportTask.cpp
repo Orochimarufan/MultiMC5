@@ -238,6 +238,7 @@ void InstanceImportTask::processFlame()
     }
 
     QString forgeVersion;
+    QString fabricLoaderVersion;
     for(auto &loader: pack.minecraft.modLoaders)
     {
         auto id = loader.id;
@@ -262,6 +263,79 @@ void InstanceImportTask::processFlame()
         mcVersion.remove(QRegExp("[.]+$"));
         logWarning(tr("Mysterious trailing dots removed from Minecraft version while importing pack."));
     }
+
+    {
+        // Jumploader
+        QString jumploaderPath = FS::PathCombine(m_stagingPath, "minecraft", "config", "jumploader.json");
+        if (QFile::exists(jumploaderPath))
+        {
+            // Check that Jumploader is actually included
+            // We do this by looking for the jumploader projectId in the manifest
+            bool haveJumploader = false;
+            for (auto &file : pack.files)
+            {
+                if (file.projectId == 361988)
+                {
+                    // Found Jumploader
+                    haveJumploader = true;
+                    break;
+                }
+            }
+            if (haveJumploader)
+            {
+                // Read Jumploader config
+                try
+                {
+                    auto doc = Json::requireDocument(jumploaderPath);
+                    auto obj = Json::requireObject(doc);
+                    int ver = Json::requireInteger(obj, "configVersion");
+                    if (ver == 2)
+                    {
+                        auto jl_defaultSources = QJsonArray{"minecraft", "fabric"};
+                        auto jl_sources = Json::ensureArray(obj, "sources", jl_defaultSources);
+                        auto jl_mcVersion = Json::ensureString(obj, "gameVersion", "current");
+                        auto jl_mcSide = Json::ensureString(obj, "gameSide", "current");
+                        //auto jl_loadJarsFromFolder = Json::ensureString(obj, "loadJarsFromFolder", QString());
+                        auto jl_overrideMainClass = Json::ensureString(obj, "overrideMainClass", QString());
+                        auto jl_flVersion = Json::ensureString(obj, "pinFabricLoaderVersion", QString());
+                        // Sanity-check supported configuration
+                        // loadJarsFromFolder doesn't need to be ckecked, sources already covers this
+                        // Currently, only pinned fabric loader is supported.
+                        if (jl_sources == jl_defaultSources
+                                && jl_mcSide == "current"
+                                && jl_overrideMainClass == QString()
+                                && !jl_flVersion.isEmpty())
+                        {
+                            qDebug() << "Found Jumploader in modpack. Switching loader to Fabric" << jl_flVersion << "(MC" << jl_mcVersion << ")";
+                            forgeVersion = QString();
+                            fabricLoaderVersion = jl_flVersion;
+                            if (jl_mcVersion != "current")
+                            {
+                                mcVersion = jl_mcVersion;
+                            }
+                        }
+                        else
+                        {
+                            logWarning(tr("Unsupported jumploader configuration. Falling back to forge jumploader."));
+                        }
+                    }
+                    else
+                    {
+                        logWarning(tr("Unsupported jumploader configuration. Falling back to forge jumploader."));
+                    }
+                }
+                catch (const Json::JsonException &)
+                {
+                    logWarning(tr("Malformed jumploader.json config file. Proceeding as if it didn't exist."));
+                }
+            }
+            else
+            {
+                logWarning(tr("Found Jumploader configuration but modpack doesn't include Jumploader."));
+            }
+        }
+    }
+
     auto components = instance.getPackProfile();
     components->buildingFromScratch();
     components->setComponentVersion("net.minecraft", mcVersion, true);
@@ -280,6 +354,10 @@ void InstanceImportTask::processFlame()
             }
         }
         components->setComponentVersion("net.minecraftforge", forgeVersion);
+    }
+    if (!fabricLoaderVersion.isEmpty())
+    {
+        components->setComponentVersion("net.fabricmc.fabric-loader", fabricLoaderVersion);
     }
     if (m_instIcon != "default")
     {
